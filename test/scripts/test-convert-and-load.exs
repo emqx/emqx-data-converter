@@ -73,6 +73,7 @@ defmodule TH do
 
     cmd = [
       "export EMQX_WAIT_FOR_START=#{wait_s}",
+      "export EMQX_LOG__LEVEL=debug",
       # "export DEBUG=2",
       "docker-entrypoint.sh emqx foreground"
     ]
@@ -82,6 +83,7 @@ defmodule TH do
     # stupid and ugly hack because, for unknown reasons, `emqx start` hangs for ~ 62
     # seconds when running before starting locally, but runs fine in CI...  🫠
     spawn_link(fn ->
+      # hint: add `into: IO.stream()` to print emqx output
       case run_in_container(cmd, stderr_to_stdout: true) do
         {:ok, _} ->
           :ok
@@ -326,6 +328,14 @@ defmodule Tests do
     delete_all_connectors()
   end
 
+  def supports_hstreamdb?(image) do
+    image
+    |> String.split(":")
+    |> List.last()
+    |> Version.parse!()
+    |> then(fn vsn -> Version.compare(vsn, Version.parse!("6.0.0")) == :lt end)
+  end
+
   setup_all do
     {:ok, %{image: System.fetch_env!("EMQX_IMAGE")}}
   end
@@ -382,8 +392,16 @@ defmodule Tests do
   #   - republish
   #   - debug (inspect)
   @tag :bridges
-  test "bridges 1" do
-    path = "test/data/bridges1.json"
+  test "bridges 1", %{image: image} do
+    supports_hstreamdb? = supports_hstreamdb?(image)
+
+    path =
+      if supports_hstreamdb? do
+        "test/data/bridges1.json"
+      else
+        "test/data/bridges1_no_hstreamdb.json"
+      end
+
     {:ok, converted_path} = TH.convert!(path)
     on_exit(fn -> File.rm(converted_path) end)
     :ok = TH.import!(converted_path)
@@ -419,6 +437,13 @@ defmodule Tests do
         "redis"
       ])
 
+    expected_connector_types =
+      if supports_hstreamdb? do
+        expected_connector_types
+      else
+        MapSet.delete(expected_connector_types, "hstreamdb")
+      end
+
     assert connectors |> Enum.map(& &1["type"]) |> Enum.into(MapSet.new()) ==
              expected_connector_types
 
@@ -432,14 +457,18 @@ defmodule Tests do
     #   - cassandra
     #   - pulsar
     #   - clickhouse
-    #   - hstreamdb
+    #   - hstreamdb (not supported in 6.x)
     #   - tdengine
     #   - rabbitmq
     #   - dynamo
     #   - influxdb (2 types)
     #   - rocketmq (2 variants, but both share the same connector config, hence 1 connector)
     #   - opentsdb
-    num_actions = 23
+    num_actions = if supports_hstreamdb? do
+      23
+    else
+      22
+    end
 
     #   - rocketmq (2 variants, but both share the same connector config, hence 1 connector)
     assert length(connectors) == num_actions - 1
@@ -472,6 +501,13 @@ defmodule Tests do
         "opents",
         "redis"
       ])
+
+    expected_action_types =
+      if supports_hstreamdb? do
+        expected_action_types
+      else
+        MapSet.delete(expected_action_types, "hstreamdb")
+      end
 
     assert actions |> Enum.map(& &1["type"]) |> Enum.into(MapSet.new()) == expected_action_types
     assert length(actions) == num_actions
