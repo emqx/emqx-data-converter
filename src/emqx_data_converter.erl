@@ -1542,10 +1542,10 @@ resource_by_id(ResId, Resources) ->
     end.
 
 make_action_name(ResourceId) ->
-    make_component_name(ResourceId, <<"resource:">>, <<"action_">>).
+    make_component_name(ResourceId, <<"resource:">>, <<"a-">>).
 
 make_connector_name(ResourceId) ->
-    make_component_name(ResourceId, <<"resource:">>, <<"connector_">>).
+    make_component_name(ResourceId, <<"resource:">>, <<"c-">>).
 
 make_component_name(ResourceId, OldPrefix, Prefix) ->
     ResourceId1 = case string:prefix(ResourceId, OldPrefix) of

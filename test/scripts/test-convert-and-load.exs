@@ -482,6 +482,20 @@ defmodule Tests do
       |> MapSet.new()
 
     assert redis_types == MapSet.new(["single", "cluster", "sentinel"])
+
+    # naming convention: `c-<6 chars>` for connectors, `a-<6 chars>` for actions, `s-<6
+    # chars>` for sources.
+    connector_names_unconventional =
+      connectors
+      |> Enum.map(& &1["name"])
+      |> Enum.reject(& &1 =~ ~r/^c-[a-z0-9]{6}/)
+    assert [] == connector_names_unconventional
+
+    action_names_unconventional =
+      actions
+      |> Enum.map(& &1["name"])
+      |> Enum.reject(& &1 =~ ~r/^a-[a-z0-9]{6}/)
+    assert [] == action_names_unconventional
   end
 
   # Checks that, if possible, attempts to reuse connectors with the same configuration
