@@ -1854,14 +1854,15 @@ tdengine_action_resource(#{<<"sql">> := SQL} = Args, ResId, #{<<"host">> := H, <
 
 webhook_action_resource(_ActionId, Args, ResId, ResConf) ->
     AllConfsIn = maps:merge(Args, ResConf),
+    RequestTTL = maps:get(<<"request_timeout">>, AllConfsIn, <<"5s">>),
     ActionConn = #{
         <<"parameters">> => convert_fields(
             [ {method, {<<"method">>, <<"POST">>, fun string:lowercase/1}}
             , {headers, {<<"headers">>, #{}}}
             , {body, {<<"body">>, <<>>, fun convert_payload_tmpl/1}}
             , {path, {<<"path">>, <<>>}}
-            , {request_timeout, {<<"request_timeout">>, <<"5s">>}}
-            ], AllConfsIn)
+            ], AllConfsIn),
+        <<"resource_opts">> => #{<<"request_ttl">> => RequestTTL}
     },
     IsSslEnabled = infer_ssl_from_uri(maps:get(<<"url">>, ResConf)),
     ConnConf1 = convert_fields(
@@ -2273,12 +2274,12 @@ convert_fields(Spec, ConfIn) when is_map(ConfIn) ->
             ({NewKey, {'$spec', SubSpec}}, ConfOut) ->
                 ConfOut#{NewKey => convert_fields(SubSpec, ConfIn)};
             ({NewKey, {OldKey, Default}}, ConfOut) ->
-                do_covert_fields(NewKey, OldKey, Default, undefined, ConfIn, ConfOut);
+                do_convert_fields(NewKey, OldKey, Default, undefined, ConfIn, ConfOut);
             ({NewKey, {OldKey, Default, ConvertFun}}, ConfOut) ->
-                do_covert_fields(NewKey, OldKey, Default, ConvertFun, ConfIn, ConfOut)
+                do_convert_fields(NewKey, OldKey, Default, ConvertFun, ConfIn, ConfOut)
         end, #{}, Spec).
 
-do_covert_fields(NewKey, OldKey, Default, ConvertFun, ConfIn, ConfOut) ->
+do_convert_fields(NewKey, OldKey, Default, ConvertFun, ConfIn, ConfOut) ->
     case maps:get(OldKey, ConfIn, Default) of
         '$absent' -> ConfOut;
         '$required' ->
