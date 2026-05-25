@@ -64,6 +64,10 @@ defmodule TH do
     if output =~ ~r"data has been imported successfully"i do
       :ok
     else
+      with {:ok, io} <- Process.get(:io) do
+        out = StringIO.flush(io)
+        IO.puts(out)
+      end
       {:error, output}
     end
   end
@@ -80,11 +84,14 @@ defmodule TH do
 
     Logger.debug(%{msg: "starting_emqx", cmd: cmd})
 
+    {:ok, sio} = StringIO.open("")
+    Process.put(:io, {:ok, sio})
+    io = IO.stream(sio, :line)
     # stupid and ugly hack because, for unknown reasons, `emqx start` hangs for ~ 62
     # seconds when running before starting locally, but runs fine in CI...  🫠
     spawn_link(fn ->
       # hint: add `into: IO.stream()` to print emqx output
-      case run_in_container(cmd, stderr_to_stdout: true) do
+      case run_in_container(cmd, stderr_to_stdout: true, into: io) do
         {:ok, _} ->
           :ok
 
