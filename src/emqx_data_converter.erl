@@ -463,8 +463,10 @@ convert_retainer_module(_InputMap, OutRawConf) ->
 
 convert_mqtt_subscriber(#{<<"modules">> := Modules}, OutRawConf0) ->
     case get_modules_by_type(<<"mqtt_subscriber">>, Modules) of
-        [#{<<"enabled">> := IsEnabled, <<"config">> := Conf, <<"id">> := Id0}] ->
-            ConnectorName = make_component_name(Id0, <<"module:">>, <<"source_connector_">>),
+        [#{<<"enabled">> := IsEnabled, <<"config">> := Conf, <<"id">> := _Id0}] ->
+            %% Id0 here is always `mqtt_subscriber`
+            RandId0 = emqx_data_converter_utils:random_id(6),
+            ConnectorName = make_component_name(RandId0, <<"module:">>, <<"c-">>),
             %% EMQX 5.6.0 doesn't support multiple subscriptions in a MQTT source,
             %% so we create a source for each subscription
             {OutConf1, MqttSourceIds} = lists:foldl(fun(SubOpts, {ConfAcc, NameAcc}) ->
@@ -475,15 +477,15 @@ convert_mqtt_subscriber(#{<<"modules">> := Modules}, OutRawConf0) ->
                         <<"connector">> => ConnectorName,
                         <<"parameters">> => #{<<"topic">> => Topic, <<"qos">> => QoS}
                     },
-                    RandId = emqx_data_converter_utils:random_id(8),
-                    SourceId = <<"source_", RandId/binary>>,
+                    RandId = emqx_data_converter_utils:random_id(6),
+                    SourceId = <<"s-", RandId/binary>>,
                     {add_type_name_conf(<<"sources">>, <<"mqtt">>, SourceId, MqttSourceConf, ConfAcc),
                      [SourceId | NameAcc]}
                 end, {OutRawConf0, []}, maps:get(<<"subscription_opts">>, Conf, [])),
             ConnectorConf = convert_mqtt_connector_fields(Conf),
             OutConf2 = add_type_name_conf(<<"connectors">>, <<"mqtt">>, ConnectorName, ConnectorConf, OutConf1),
             %% we also add a rule that republish the topics to local broker.
-            RuleName = make_component_name(Id0, <<"module:">>, <<"mqtt_source_rule_">>),
+            RuleName = make_component_name(RandId0, <<"module:">>, <<"r-">>),
             RuleConf = make_source_mqtt_republish_rule(MqttSourceIds),
             add_type_name_conf(<<"rule_engine">>, <<"rules">>, RuleName, RuleConf, OutConf2);
         _ ->

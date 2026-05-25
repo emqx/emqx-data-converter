@@ -311,6 +311,7 @@ defmodule Tests do
 
   def delete_all_rules() do
     api_slug = "rules"
+
     TH.api_req!(:get, api_slug)
     |> Map.fetch!(:body)
     |> Map.fetch!("data")
@@ -488,13 +489,15 @@ defmodule Tests do
     connector_names_unconventional =
       connectors
       |> Enum.map(& &1["name"])
-      |> Enum.reject(& &1 =~ ~r/^c-[a-z0-9]{6}/)
+      |> Enum.reject(&(&1 =~ ~r/^c-[a-z0-9]{6}/))
+
     assert [] == connector_names_unconventional
 
     action_names_unconventional =
       actions
       |> Enum.map(& &1["name"])
-      |> Enum.reject(& &1 =~ ~r/^a-[a-z0-9]{6}/)
+      |> Enum.reject(&(&1 =~ ~r/^a-[a-z0-9]{6}/))
+
     assert [] == action_names_unconventional
   end
 
@@ -520,5 +523,61 @@ defmodule Tests do
     assert [_, _, _] = actions
     # only one connector, as it has the same configuration in 4.x
     assert [%{"actions" => [_, _, _]}] = connectors
+  end
+
+  # Checks that we convert mqtt sources
+  @tag :bridges
+  @tag :sources
+  test "mqtt sources" do
+    path = "test/data/mqtt_source.json"
+    {:ok, converted_path} = TH.convert!(path)
+    on_exit(fn -> File.rm(converted_path) end)
+    :ok = TH.import!(converted_path)
+
+    on_exit(&cleanup_bridges_and_rules/0)
+
+    connectors =
+      TH.api_req!(:get, "connectors")
+      |> Map.fetch!(:body)
+
+    sources =
+      TH.api_req!(:get, "sources")
+      |> Map.fetch!(:body)
+
+    rules =
+      TH.api_req!(:get, "rules")
+      |> Map.fetch!(:body)
+      |> Map.fetch!("data")
+
+    # naming convention: `c-<6 chars>` for connectors, `a-<6 chars>` for actions, `s-<6
+    # chars>` for sources.
+    connector_names_unconventional =
+      connectors
+      |> Enum.map(& &1["name"])
+      |> Enum.reject(&(&1 =~ ~r/^c-[a-z0-9]{6}/))
+
+    assert [] == connector_names_unconventional
+
+    source_names_unconventional =
+      sources
+      |> Enum.map(& &1["name"])
+      |> Enum.reject(&(&1 =~ ~r/^s-[a-z0-9]{6}/))
+
+    assert [] == source_names_unconventional
+
+    # this fixture contains one mqtt source (at most one can exist in 4.4), and one mqtt
+    # connector for an action
+    assert [_, _] = connectors
+
+    # we should have one source for each topic in the 4.4 subscriber
+    assert [_, _] = sources
+    referenced_connectors = sources |> MapSet.new(& &1["connector"])
+    assert [%{}] = Enum.filter(connectors, &(&1["name"] in referenced_connectors))
+
+    # also one rule that selects from all sources, plus an action's rule
+    assert [_, _] = rules
+
+    assert [%{"from" => [_, _], "actions" => [%{"function" => "republish"}]}] =
+             rules |> Enum.filter(&(&1["actions"] |> hd() |> is_map()))
   end
 end
