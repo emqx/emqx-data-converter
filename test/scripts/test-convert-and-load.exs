@@ -64,6 +64,10 @@ defmodule TH do
     if output =~ ~r"data has been imported successfully"i do
       :ok
     else
+      with {:ok, io} <- Process.get(:io) do
+        out = StringIO.flush(io)
+        IO.puts(out)
+      end
       {:error, output}
     end
   end
@@ -73,16 +77,21 @@ defmodule TH do
 
     cmd = [
       "export EMQX_WAIT_FOR_START=#{wait_s}",
+      "export EMQX_LOG__LEVEL=debug",
       # "export DEBUG=2",
       "docker-entrypoint.sh emqx foreground"
     ]
 
     Logger.debug(%{msg: "starting_emqx", cmd: cmd})
 
+    {:ok, sio} = StringIO.open("")
+    Process.put(:io, {:ok, sio})
+    io = IO.stream(sio, :line)
     # stupid and ugly hack because, for unknown reasons, `emqx start` hangs for ~ 62
     # seconds when running before starting locally, but runs fine in CI...  🫠
     spawn_link(fn ->
-      case run_in_container(cmd, stderr_to_stdout: true) do
+      # hint: add `into: IO.stream()` to print emqx output
+      case run_in_container(cmd, stderr_to_stdout: true, into: io) do
         {:ok, _} ->
           :ok
 
@@ -311,6 +320,7 @@ defmodule Tests do
 
   def delete_all_rules() do
     api_slug = "rules"
+
     TH.api_req!(:get, api_slug)
     |> Map.fetch!(:body)
     |> Map.fetch!("data")
@@ -323,6 +333,14 @@ defmodule Tests do
     delete_all_rules()
     delete_all_actions()
     delete_all_connectors()
+  end
+
+  def supports_hstreamdb?(image) do
+    image
+    |> String.split(":")
+    |> List.last()
+    |> Version.parse!()
+    |> then(fn vsn -> Version.compare(vsn, Version.parse!("6.0.0")) == :lt end)
   end
 
   setup_all do
@@ -381,8 +399,16 @@ defmodule Tests do
   #   - republish
   #   - debug (inspect)
   @tag :bridges
-  test "bridges 1" do
-    path = "test/data/bridges1.json"
+  test "bridges 1", %{image: image} do
+    supports_hstreamdb? = supports_hstreamdb?(image)
+
+    path =
+      if supports_hstreamdb? do
+        "test/data/bridges1.json"
+      else
+        "test/data/bridges1_no_hstreamdb.json"
+      end
+
     {:ok, converted_path} = TH.convert!(path)
     on_exit(fn -> File.rm(converted_path) end)
     :ok = TH.import!(converted_path)
@@ -418,6 +444,13 @@ defmodule Tests do
         "redis"
       ])
 
+    expected_connector_types =
+      if supports_hstreamdb? do
+        expected_connector_types
+      else
+        MapSet.delete(expected_connector_types, "hstreamdb")
+      end
+
     assert connectors |> Enum.map(& &1["type"]) |> Enum.into(MapSet.new()) ==
              expected_connector_types
 
@@ -431,14 +464,18 @@ defmodule Tests do
     #   - cassandra
     #   - pulsar
     #   - clickhouse
-    #   - hstreamdb
+    #   - hstreamdb (not supported in 6.x)
     #   - tdengine
     #   - rabbitmq
     #   - dynamo
     #   - influxdb (2 types)
     #   - rocketmq (2 variants, but both share the same connector config, hence 1 connector)
     #   - opentsdb
-    num_actions = 23
+    num_actions = if supports_hstreamdb? do
+      23
+    else
+      22
+    end
 
     #   - rocketmq (2 variants, but both share the same connector config, hence 1 connector)
     assert length(connectors) == num_actions - 1
@@ -472,6 +509,13 @@ defmodule Tests do
         "redis"
       ])
 
+    expected_action_types =
+      if supports_hstreamdb? do
+        expected_action_types
+      else
+        MapSet.delete(expected_action_types, "hstreamdb")
+      end
+
     assert actions |> Enum.map(& &1["type"]) |> Enum.into(MapSet.new()) == expected_action_types
     assert length(actions) == num_actions
 
@@ -482,6 +526,22 @@ defmodule Tests do
       |> MapSet.new()
 
     assert redis_types == MapSet.new(["single", "cluster", "sentinel"])
+
+    # naming convention: `c-<6 chars>` for connectors, `a-<6 chars>` for actions, `s-<6
+    # chars>` for sources.
+    connector_names_unconventional =
+      connectors
+      |> Enum.map(& &1["name"])
+      |> Enum.reject(&(&1 =~ ~r/^c-[a-z0-9]{6}/))
+
+    assert [] == connector_names_unconventional
+
+    action_names_unconventional =
+      actions
+      |> Enum.map(& &1["name"])
+      |> Enum.reject(&(&1 =~ ~r/^a-[a-z0-9]{6}/))
+
+    assert [] == action_names_unconventional
   end
 
   # Checks that, if possible, attempts to reuse connectors with the same configuration
@@ -506,5 +566,61 @@ defmodule Tests do
     assert [_, _, _] = actions
     # only one connector, as it has the same configuration in 4.x
     assert [%{"actions" => [_, _, _]}] = connectors
+  end
+
+  # Checks that we convert mqtt sources
+  @tag :bridges
+  @tag :sources
+  test "mqtt sources" do
+    path = "test/data/mqtt_source.json"
+    {:ok, converted_path} = TH.convert!(path)
+    on_exit(fn -> File.rm(converted_path) end)
+    :ok = TH.import!(converted_path)
+
+    on_exit(&cleanup_bridges_and_rules/0)
+
+    connectors =
+      TH.api_req!(:get, "connectors")
+      |> Map.fetch!(:body)
+
+    sources =
+      TH.api_req!(:get, "sources")
+      |> Map.fetch!(:body)
+
+    rules =
+      TH.api_req!(:get, "rules")
+      |> Map.fetch!(:body)
+      |> Map.fetch!("data")
+
+    # naming convention: `c-<6 chars>` for connectors, `a-<6 chars>` for actions, `s-<6
+    # chars>` for sources.
+    connector_names_unconventional =
+      connectors
+      |> Enum.map(& &1["name"])
+      |> Enum.reject(&(&1 =~ ~r/^c-[a-z0-9]{6}/))
+
+    assert [] == connector_names_unconventional
+
+    source_names_unconventional =
+      sources
+      |> Enum.map(& &1["name"])
+      |> Enum.reject(&(&1 =~ ~r/^s-[a-z0-9]{6}/))
+
+    assert [] == source_names_unconventional
+
+    # this fixture contains one mqtt source (at most one can exist in 4.4), and one mqtt
+    # connector for an action
+    assert [_, _] = connectors
+
+    # we should have one source for each topic in the 4.4 subscriber
+    assert [_, _] = sources
+    referenced_connectors = sources |> MapSet.new(& &1["connector"])
+    assert [%{}] = Enum.filter(connectors, &(&1["name"] in referenced_connectors))
+
+    # also one rule that selects from all sources, plus an action's rule
+    assert [_, _] = rules
+
+    assert [%{"from" => [_, _], "actions" => [%{"function" => "republish"}]}] =
+             rules |> Enum.filter(&(&1["actions"] |> hd() |> is_map()))
   end
 end

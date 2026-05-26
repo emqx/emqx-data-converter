@@ -19,7 +19,7 @@ jobs:
       UBUNTU_VSN: ${{ steps.env_setup.outputs.UBUNTU_VSN }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4.1.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ github.event.inputs.ref }}
       - name: Set up environment
@@ -31,7 +31,6 @@ jobs:
           echo "OTP_VSN=$OTP_VSN" | tee -a "$GITHUB_OUTPUT"
           echo "ELIXIR_VSN=$ELIXIR_VSN" | tee -a "$GITHUB_OUTPUT"
           echo "BUILDER=$EMQX_BUILDER" | tee -a "$GITHUB_OUTPUT"
-          echo "EMQX_IMAGE=$EMQX_IMAGE" | tee -a "$GITHUB_OUTPUT"
           echo "UBUNTU_VSN=$UBUNTU_VSN" | tee -a "$GITHUB_OUTPUT"
 
   build:
@@ -41,7 +40,7 @@ jobs:
       - init
     steps:
       - name: Checkout
-        uses: actions/checkout@v4.1.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ github.event.inputs.ref }}
       - name: build
@@ -60,8 +59,13 @@ jobs:
       - init
       - build
     uses: ./.github/workflows/integration_tests.yaml
+    strategy:
+      matrix:
+        emqx_image:
+          - emqx/emqx-enterprise:5.10.3
+          - emqx/emqx-enterprise:6.2.0
     with:
       ubuntu_vsn: ${{ needs.init.outputs.UBUNTU_VSN }}
-      emqx_image: ${{ needs.init.outputs.EMQX_IMAGE }}
+      emqx_image: ${{ matrix.emqx_image }}
       otp: ${{ needs.init.outputs.OTP_VSN }}
       elixir: ${{ needs.init.outputs.ELIXIR_VSN }}
