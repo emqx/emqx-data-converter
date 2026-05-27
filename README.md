@@ -1,7 +1,7 @@
 # EMQX Enterprise v4 Data Migration
 
 A CLI tool to convert EMQX 4.4 JSON backup files to EMQX v5 and v6 archive files.
-The converted .tar.gz file can be imported to EMQX Enterprise 5.6.0 or newer (including v6).
+The converted .tar.gz file can be imported to EMQX Enterprise 5.6.1 or newer (including v6).
 
 Currently, the following configs/data are converted:
 
