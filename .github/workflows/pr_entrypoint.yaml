@@ -62,7 +62,7 @@ jobs:
     strategy:
       matrix:
         emqx_image:
-          - emqx/emqx-enterprise:5.10.3
+          - emqx/emqx-enterprise:5.10.4
           - emqx/emqx-enterprise:6.2.0
     with:
       ubuntu_vsn: ${{ needs.init.outputs.UBUNTU_VSN }}
