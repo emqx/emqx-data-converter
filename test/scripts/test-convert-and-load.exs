@@ -335,6 +335,11 @@ defmodule Tests do
     delete_all_connectors()
   end
 
+  def cleanup_mnesia_authz() do
+    path = "authorization/sources/built_in_database/rules"
+    TH.api_req!(:delete, path)
+  end
+
   def supports_hstreamdb?(image) do
     image
     |> String.split(":")
@@ -622,5 +627,26 @@ defmodule Tests do
 
     assert [%{"from" => [_, _], "actions" => [%{"function" => "republish"}]}] =
              rules |> Enum.filter(&(&1["actions"] |> hd() |> is_map()))
+  end
+
+  # checks that we transform placoholders for mnesia authz
+  @tag :authz
+  test "mnesia/built-in authz with placeholders" do
+    path = "test/data/authz-mnesia-acl.json"
+    {:ok, converted_path} = TH.convert!(path)
+    on_exit(fn -> File.rm(converted_path) end)
+    :ok = TH.import!(converted_path)
+    on_exit(&cleanup_mnesia_authz/0)
+
+    rules_all =
+      TH.api_req!(:get, "authorization/sources/built_in_database/rules/all")
+      |> Map.fetch!(:body)
+      |> Map.fetch!("rules")
+
+    assert [%{
+               "action" => "all",
+               "permission" => "allow",
+               "topic" => "${clientid}/${username}"
+            }] = rules_all
   end
 end

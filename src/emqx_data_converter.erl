@@ -359,7 +359,8 @@ convert_acl_mnesia(_InutMap) ->
     ok.
 
 convert_acl_mnesia_rule(#{<<"action">> := Action, <<"access">> := Permission, <<"topic">> := Topic}) ->
-    {permission(Permission), action(Action), Topic}.
+    Placeholders = [{<<"${username}">>, <<"%u">>}, {<<"${clientid}">>, <<"%c">>}],
+    {permission(Permission), action(Action), convert_placeholders(Topic, Placeholders)}.
 
 action(<<"pub">>) -> publish;
 action(<<"sub">>) -> subscribe.
