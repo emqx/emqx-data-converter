@@ -68,6 +68,7 @@ defmodule TH do
         out = StringIO.flush(io)
         IO.puts(out)
       end
+
       {:error, output}
     end
   end
@@ -476,11 +477,12 @@ defmodule Tests do
     #   - influxdb (2 types)
     #   - rocketmq (2 variants, but both share the same connector config, hence 1 connector)
     #   - opentsdb
-    num_actions = if supports_hstreamdb? do
-      23
-    else
-      22
-    end
+    num_actions =
+      if supports_hstreamdb? do
+        23
+      else
+        22
+      end
 
     #   - rocketmq (2 variants, but both share the same connector config, hence 1 connector)
     assert length(connectors) == num_actions - 1
@@ -643,10 +645,12 @@ defmodule Tests do
       |> Map.fetch!(:body)
       |> Map.fetch!("rules")
 
-    assert [%{
+    assert [
+             %{
                "action" => "all",
                "permission" => "allow",
                "topic" => "${clientid}/${username}"
-            }] = rules_all
+             }
+           ] = rules_all
   end
 end
