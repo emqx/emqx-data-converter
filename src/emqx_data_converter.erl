@@ -163,7 +163,14 @@ setup_mnesia() ->
     mnesia:delete_schema([node()]),
     ok = mnesia:create_schema([node()]),
     ok = mnesia:start(),
-    LazyTables = [emqx_app],
+    LazyTables = [
+        emqx_app,
+        emqx_authn_mnesia,
+        emqx_psk,
+        emqx_acl,
+        emqx_banned,
+        emqx_retainer_message
+    ],
     TabSpecs = maps:without(LazyTables, tabs_spec()),
     maps:foreach(fun create_table/2, TabSpecs).
 
@@ -295,6 +302,7 @@ copy_data_files(DataFilesDir) ->
 convert_retained_messages() ->
     case mnesia_lib:exists(mnesia_lib:tab2dcd(emqx_retainer)) of
         true ->
+            create_table_lazy(emqx_retainer_message),
             ets:new(emqx_retainer, [set, named_table, public, {keypos, 2}]),
             mnesia_log:dcd2ets(emqx_retainer),
             MsgNum = ets:foldl(fun({retained, Topic, Message44, Expiry}, Count) ->
@@ -308,7 +316,10 @@ convert_retained_messages() ->
             log_warning("No retained messages to migrate.")
     end.
 
+convert_auth_mnesia(#{<<"auth_mnesia">> := []}, UserIdType) ->
+    {ok, UserIdType};
 convert_auth_mnesia(#{<<"auth_mnesia">> := AuthMnesiaData}, UserIdType) ->
+    create_table_lazy(emqx_authn_mnesia),
     UserIdType1 = user_type(AuthMnesiaData, UserIdType),
     lists:foreach(
       fun(#{<<"login">> := L, <<"type">> := T, <<"password">> := P}) when T =:= UserIdType1 ->
@@ -360,7 +371,10 @@ user_type(AuthMnesiaData, undefined) ->
 user_type(_AuthMnesiaData, UserType) ->
     UserType.
 
-convert_acl_mnesia(#{<<"acl_mnesia">> := AclMneisaData}) ->
+convert_acl_mnesia(#{<<"acl_mnesia">> := []}) ->
+    ok;
+convert_acl_mnesia(#{<<"acl_mnesia">> := AclMnesiaData}) ->
+    create_table_lazy(emqx_acl),
     KeyFun = fun(#{<<"type">> := <<"all">>}) -> ?ACL_TABLE_ALL;
                 (#{<<"type">> := Type0, <<"type_value">> := Val}) ->
                      Type = case Type0 of
@@ -369,7 +383,7 @@ convert_acl_mnesia(#{<<"acl_mnesia">> := AclMneisaData}) ->
                             end,
                      {Type, Val}
              end,
-    GroupedAcl = maps:groups_from_list(KeyFun, AclMneisaData),
+    GroupedAcl = maps:groups_from_list(KeyFun, AclMnesiaData),
     maps:foreach(
       fun(Who, Rules0) ->
               Rules = shrink_acl_rules(lists:map(fun convert_acl_mnesia_rule/1, Rules0)),
@@ -400,17 +414,20 @@ shrink_acl_rules(Rules0) ->
       maps:values(maps:groups_from_list(KeyFun, Rules0))
      ).
 
+convert_blacklist_mnesia(#{<<"blacklist">> := []}) ->
+    ok;
 convert_blacklist_mnesia(#{<<"blacklist">> := BlackList}) ->
-   lists:foreach(
-     fun(#{<<"who">> := Who, <<"reason">> := Reason, <<"by">> := By,
-           <<"at">> := At, <<"until">> := Until}) ->
-             Who1 = banned_who(Who),
-             ok = mnesia:dirty_write(
-                    emqx_banned,
-                    #banned{who = Who1, by = By, reason = Reason, at = At, until = Until}
-                   )
-     end,
-     BlackList);
+    create_table_lazy(emqx_banned),
+    lists:foreach(
+      fun(#{<<"who">> := Who, <<"reason">> := Reason, <<"by">> := By,
+            <<"at">> := At, <<"until">> := Until}) ->
+              Who1 = banned_who(Who),
+              ok = mnesia:dirty_write(
+                     emqx_banned,
+                     #banned{who = Who1, by = By, reason = Reason, at = At, until = Until}
+                    )
+      end,
+      BlackList);
 convert_blacklist_mnesia(_InputMap) ->
     ok.
 
@@ -520,12 +537,20 @@ convert_mqtt_subscriber(_InputMap, OutRawConf) ->
     OutRawConf.
 
 psk_auth(IsEnabled, FileContent, OutRawConf) ->
-    lists:foreach(
-      fun(IdentitySec) ->
-              [Identity, Secret] = binary:split(IdentitySec, <<":">>, [trim_all]),
-              ok = mnesia:dirty_write(emqx_psk, #psk_entry{psk_id = Identity, shared_secret = Secret})
-      end,
-      binary:split(FileContent, <<"\n">>, [global, trim_all])),
+    case binary:split(FileContent, <<"\n">>, [global, trim_all]) of
+        [] ->
+            ok;
+        PSKs ->
+            create_table_lazy(emqx_psk),
+            lists:foreach(
+              fun(IdentitySec) ->
+                      [Identity, Secret] = binary:split(IdentitySec, <<":">>, [trim_all]),
+                      ok = mnesia:dirty_write(emqx_psk,
+                                              #psk_entry{psk_id = Identity, shared_secret = Secret})
+              end,
+              PSKs
+              )
+    end,
     OutRawConf#{<<"psk_authentication">> => #{<<"enable">> => IsEnabled}}.
 
 convert_auth_modules(#{<<"modules">> := Modules} = InputMap, Opts) ->
