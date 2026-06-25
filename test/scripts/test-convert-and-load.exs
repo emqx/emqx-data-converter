@@ -175,6 +175,11 @@ defmodule TH do
   def start_container(image) do
     Logger.info(%{msg: "starting_container", image: image})
 
+    bootstrap_api_key_file = "/tmp/bootstrap-api-key.txt"
+    File.rm(bootstrap_api_key_file)
+    ExUnit.Callbacks.on_exit(fn -> File.rm(bootstrap_api_key_file) end)
+    File.write!(bootstrap_api_key_file, "test_admin:secret")
+
     run(
       "docker",
       [
@@ -183,9 +188,13 @@ defmodule TH do
         "-d",
         "-v",
         "#{File.cwd!()}:/opt/data",
+        "-v",
+        "#{bootstrap_api_key_file}:#{bootstrap_api_key_file}:ro",
         # in case we want to execute RPC via gen_rpc
         # "-p", "5370:5369",
         # dashboard
+        "-e",
+        "EMQX_API_KEY__BOOTSTRAP_FILE=#{bootstrap_api_key_file}",
         "-p",
         "48083:18083",
         "--name",
@@ -261,6 +270,9 @@ defmodule TH do
   end
 
   @doc """
+  We use bootstrap api keys with user `test_admin` and password `secret`.
+
+  Previously, we used an user from the import:
   If the api user needs to be recreated, one may execute:
 
   ```erlang
@@ -274,8 +286,8 @@ defmodule TH do
   ```
   """
   def api_req!(method, path, body \\ "", _opts \\ []) do
-    api_user = "app_id"
-    api_pass = "4mVZvVT9CnC6Z3AYdk9C07Ecz9AuBCLblb43kk69BcxbBhP"
+    api_user = "test_admin"
+    api_pass = "secret"
     authn64 = Base.encode64("#{api_user}:#{api_pass}")
 
     HTTPoison.request!(
