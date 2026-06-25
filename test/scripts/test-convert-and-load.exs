@@ -73,6 +73,21 @@ defmodule TH do
     end
   end
 
+  def list_contents(converted_path) do
+    basename = Path.basename(converted_path, ".tar.gz")
+
+    with {:ok, contents} <- :erl_tar.table(converted_path, [:compressed]) do
+      contents =
+        contents
+        |> Stream.map(&to_string/1)
+        |> Stream.map(&String.trim_leading(&1, basename))
+        |> Enum.map(&String.trim_leading(&1, "/"))
+        |> Map.from_keys(true)
+
+      {:ok, contents}
+    end
+  end
+
   def start_emqx(opts \\ []) do
     wait_s = Keyword.get(opts, :wait_s, 15)
 
@@ -652,5 +667,31 @@ defmodule Tests do
                "topic" => "${clientid}/${username}"
              }
            ] = rules_all
+  end
+
+  @tag :authn
+  @tag :no_import
+  test "empty `apps` key does not create table file" do
+    path = "test/data/empty.json"
+    {:ok, converted_path} = TH.convert!(path)
+    on_exit(fn -> File.rm(converted_path) end)
+
+    {:ok, contents} = TH.list_contents(converted_path)
+
+    assert not match?(%{"mnesia/emqx_app" => _}, contents),
+           "contents: #{inspect(contents, pretty: true)}"
+  end
+
+  @tag :authn
+  @tag :no_import
+  test "absent `apps` key does not create table file" do
+    path = "test/data/more_than_empty.json"
+    {:ok, converted_path} = TH.convert!(path)
+    on_exit(fn -> File.rm(converted_path) end)
+
+    {:ok, contents} = TH.list_contents(converted_path)
+
+    assert not match?(%{"mnesia/emqx_app" => _}, contents),
+           "contents: #{inspect(contents, pretty: true)}"
   end
 end

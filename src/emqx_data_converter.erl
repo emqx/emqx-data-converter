@@ -37,6 +37,8 @@
 -define(tar(_FileName_), _FileName_ ++ ?TAR_SUFFIX).
 -define(TAR_SUFFIX, ".tar.gz").
 
+-define(TAB_PD(APP), {?MODULE, tab, APP}).
+
 -define(fmt_tar_err(_Expr_),
         fun() ->
                 case _Expr_ of
@@ -161,7 +163,9 @@ setup_mnesia() ->
     mnesia:delete_schema([node()]),
     ok = mnesia:create_schema([node()]),
     ok = mnesia:start(),
-    maps:foreach(fun create_table/2, tabs_spec()).
+    LazyTables = [emqx_app],
+    TabSpecs = maps:without(LazyTables, tabs_spec()),
+    maps:foreach(fun create_table/2, TabSpecs).
 
 tabs_spec() ->
     #{emqx_authn_mnesia =>
@@ -199,7 +203,16 @@ tabs_spec() ->
 create_table(Name, Opts0) ->
     Opts = [{disc_copies, [node()]} | Opts0],
     {atomic, ok} = mnesia:create_table(Name, Opts),
-    ok = mnesia:wait_for_tables([Name], infinity).
+    ok = mnesia:wait_for_tables([Name], infinity),
+    put(?TAB_PD(Name), #{created => true}),
+    ok.
+
+create_table_lazy(Name) ->
+    Opts = maps:get(Name, tabs_spec()),
+    create_table(Name, Opts).
+
+get_table_status_pd(Name) ->
+    get(?TAB_PD(Name)).
 
 prepare_new_backup(OutputDir) ->
     Ts = erlang:system_time(millisecond),
@@ -239,13 +252,21 @@ export_mnesia_tabs(TarDescriptor, BackupName, BackupBaseName) ->
     ).
 
 export_mnesia_tab(TarDescriptor, TabName, BackupName, BackupBaseName) ->
-    {ok, MnesiaBackupName} = do_export_mnesia_tab(TabName, BackupName),
+    case get_table_status_pd(TabName) of
+        #{created := true} ->
+            do_export_mnesia_tab1(TarDescriptor, TabName, BackupName, BackupBaseName);
+        _ ->
+            ok
+    end.
+
+do_export_mnesia_tab1(TarDescriptor, TabName, BackupName, BackupBaseName) ->
+    {ok, MnesiaBackupName} = do_export_mnesia_tab2(TabName, BackupName),
     NameInArchive = mnesia_backup_name(BackupBaseName, TabName),
     ok = ?fmt_tar_err(erl_tar:add(TarDescriptor, MnesiaBackupName, NameInArchive, [])),
     _ = file:delete(MnesiaBackupName),
     ok.
 
-do_export_mnesia_tab(TabName, BackupName) ->
+do_export_mnesia_tab2(TabName, BackupName) ->
     Node = node(),
     try
         {ok, TabName, [Node]} = mnesia:activate_checkpoint(
@@ -401,7 +422,10 @@ banned_who(#{<<"username">> := User}) ->
 banned_who(#{<<"clientid">> := Client}) ->
     {clientid, Client}.
 
+convert_emqx_app_mnesia(#{<<"apps">> := []}) ->
+    ok;
 convert_emqx_app_mnesia(#{<<"apps">> := Apps}) ->
+    create_table_lazy(emqx_app),
     lists:foreach(fun(#{<<"id">> := <<"admin">>}) -> ok;
                      (#{<<"id">> := Id, <<"secret">> := Sec, <<"name">> := N, <<"desc">> := D,
                        <<"status">> := St, <<"expired">> := Exp}) ->
