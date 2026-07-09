@@ -133,7 +133,9 @@ main1(Opts) ->
                     undefined ->
                         {ok, CWD} = file:get_cwd(),
                         CWD;
-                    ODir -> ODir
+                    ODir ->
+                        ok = ensure_output_dir(ODir),
+                        ODir
                 end,
     UserIdType = proplists:get_value(user_id_type, Opts),
     JwtType = proplists:get_value(jwt_type, Opts),
@@ -158,6 +160,18 @@ main1(Opts) ->
     {ok, BackupTarName} = export(OutRawConfRule, BackupName, TarDescriptor, Edition),
     file:del_dir_r(BackupName),
     log_info("Converted to EMQX 5.1 backup file: ~s", [BackupTarName]).
+
+ensure_output_dir(Dir) ->
+    %% filelib:ensure_dir/1 creates the parent of the given path, so pass a
+    %% dummy child to make it create `Dir` itself.
+    case filelib:ensure_dir(filename:join(Dir, "dummy")) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            log_error("Failed to create output directory \"~s\": ~s",
+                      [Dir, file:format_error(Reason)]),
+            halt(1)
+    end.
 
 setup_mnesia() ->
     mnesia:delete_schema([node()]),
