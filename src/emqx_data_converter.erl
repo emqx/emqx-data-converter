@@ -595,7 +595,11 @@ convert_auth_modules(#{<<"modules">> := Modules} = InputMap, Opts) ->
     AuthzList1 = sort_by_order(lists:filter(FilterFun, AuthzList), AuthzOrder),
     DenyAction = maps:get(<<"acl_deny_action">>, EmqxHotConf, <<>>),
     NoMatch = maps:get(<<"acl_nomatch">>, EmqxHotConf, <<>>),
-    OutAuthzConf = #{<<"sources">> => AuthzList1},
+    OutAuthzConf = #{
+        <<"sources">> => AuthzList1,
+        %% we cannot get the cache config from EMQX 4.4.x, so we just enable it by default
+        <<"cache">> => #{<<"enable">> => true}
+    },
     OutAuthzConf1 = put_unless_empty(<<"deny_action">>, DenyAction, OutAuthzConf),
     OutAuthzConf2 = put_unless_empty(<<"no_match">>, NoMatch, OutAuthzConf1),
     #{<<"authentication">> => AuthnList1,
